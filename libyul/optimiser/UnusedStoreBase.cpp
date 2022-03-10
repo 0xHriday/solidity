@@ -40,7 +40,14 @@ void UnusedStoreBase::operator()(If const& _if)
 	TrackedStores skipBranch{m_stores};
 	(*this)(_if.body);
 
-	merge(m_stores, move(skipBranch));
+	// TODO actually I think it would be best to just check
+	// "continues execution" for each statement and
+	// clear m_stores if it does not. This would also eliminate the need
+	// to clear after break, continue or leave.
+	if (continuesExecution(_if.body))
+		merge(m_stores, move(skipBranch));
+	else
+		m_stores = move(skipBranch);
 }
 
 void UnusedStoreBase::operator()(Switch const& _switch)
@@ -50,22 +57,30 @@ void UnusedStoreBase::operator()(Switch const& _switch)
 	TrackedStores const preState{m_stores};
 
 	bool hasDefault = false;
-	vector<TrackedStores> branches;
+	vector<TrackedStores> branchesToJoin;
 	for (auto const& c: _switch.cases)
 	{
 		if (!c.value)
 			hasDefault = true;
 		(*this)(c.body);
-		branches.emplace_back(move(m_stores));
+		if (continuesExecution(c.body))
+			branchesToJoin.emplace_back(move(m_stores));
 		m_stores = preState;
 	}
 
-	if (hasDefault)
+	if (!hasDefault)
+		branchesToJoin.emplace_back(preState);
+
+	if (branchesToJoin.empty())
+		// This happens if all branches terminate,
+		// it does not really matter what we do here.
+		m_stores = preState;
+	else
 	{
-		m_stores = move(branches.back());
-		branches.pop_back();
+		m_stores = move(branchesToJoin.back());
+		branchesToJoin.pop_back();
 	}
-	for (auto& branch: branches)
+	for (auto& branch: branchesToJoin)
 		merge(m_stores, move(branch));
 }
 
@@ -74,8 +89,15 @@ void UnusedStoreBase::operator()(FunctionDefinition const& _functionDefinition)
 	ScopedSaveAndRestore outerAssignments(m_stores, {});
 	ScopedSaveAndRestore forLoopInfo(m_forLoopInfo, {});
 	ScopedSaveAndRestore forLoopNestingDepth(m_forLoopNestingDepth, 0);
+	ScopedSaveAndRestore storesAtEndOfFunction(m_storesAtEndOfFunction, nullopt);
 
 	(*this)(_functionDefinition.body);
+
+	if (m_storesAtEndOfFunction)
+	{
+		TrackedStores storesAtEnd = *m_storesAtEndOfFunction;
+		merge(m_stores, move(storesAtEnd));
+	}
 
 	finalizeFunctionDefinition(_functionDefinition);
 }
@@ -140,6 +162,15 @@ void UnusedStoreBase::operator()(Continue const&)
 	m_stores.clear();
 }
 
+void UnusedStoreBase::operator()(Leave const&)
+{
+	if (m_storesAtEndOfFunction)
+		merge(*m_storesAtEndOfFunction, move(m_stores));
+	else
+		m_storesAtEndOfFunction = move(m_stores);
+	m_stores.clear();
+}
+
 void UnusedStoreBase::merge(TrackedStores& _target, TrackedStores&& _other)
 {
 	util::joinMap(_target, move(_other), [](
@@ -156,4 +187,12 @@ void UnusedStoreBase::merge(TrackedStores& _target, vector<TrackedStores>&& _sou
 	for (TrackedStores& ts: _source)
 		merge(_target, move(ts));
 	_source.clear();
+}
+
+bool UnusedStoreBase::continuesExecution(Block const& _block)
+{
+	return
+		_block.statements.empty() ||
+		TerminationFinder(m_dialect, &m_controlFlowSideEffects).controlFlowKind(_block.statements.back()) ==
+		TerminationFinder::ControlFlow::FlowOut;
 }

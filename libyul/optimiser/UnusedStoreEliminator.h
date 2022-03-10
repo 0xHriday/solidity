@@ -62,17 +62,15 @@ public:
 		std::map<YulString, AssignedValue> const& _ssaValues,
 		bool _ignoreMemory
 	):
-		UnusedStoreBase(_dialect),
+		UnusedStoreBase(_dialect, move(_controlFlowSideEffects)),
 		m_ignoreMemory(_ignoreMemory),
 		m_functionSideEffects(_functionSideEffects),
-		m_controlFlowSideEffects(_controlFlowSideEffects),
 		m_ssaValues(_ssaValues)
 	{}
 
 	using UnusedStoreBase::operator();
 	void operator()(FunctionCall const& _functionCall) override;
 	void operator()(FunctionDefinition const&) override;
-	void operator()(Leave const&) override;
 
 	using UnusedStoreBase::visit;
 	void visit(Statement const& _statement) override;
@@ -110,7 +108,6 @@ private:
 
 	bool const m_ignoreMemory;
 	std::map<YulString, SideEffects> const& m_functionSideEffects;
-	std::map<YulString, ControlFlowSideEffects> m_controlFlowSideEffects;
 	std::map<YulString, AssignedValue> const& m_ssaValues;
 
 	std::map<Statement const*, Operation> m_storeOperations;

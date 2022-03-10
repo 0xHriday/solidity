@@ -110,12 +110,6 @@ void UnusedStoreEliminator::operator()(FunctionDefinition const& _functionDefini
 	UnusedStoreBase::operator()(_functionDefinition);
 }
 
-
-void UnusedStoreEliminator::operator()(Leave const&)
-{
-	changeUndecidedTo(State::Used);
-}
-
 void UnusedStoreEliminator::visit(Statement const& _statement)
 {
 	using evmasm::Instruction;
